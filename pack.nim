@@ -1,8 +1,8 @@
-import docopt, intsets, os, osproc, streams, strutils, tables, tempfile
+import docopt, streams, strutils
 
 type
   Node = string
-  
+
   GateKind = enum
     gateNot
     gateAnd
@@ -10,13 +10,13 @@ type
     gateNand
     gateNor
     gateXor
-  
+
   Gate = object of RootObj
     kind: GateKind
     input1: Node
     input2: Node
     output: Node
-  
+
   BlifParseError = object of Exception
 
 proc hasTwoInputs(kind: GateKind): bool {.inline, noSideEffect.} =
@@ -91,7 +91,7 @@ proc readBlif(input: Stream): seq[Gate] =
 #     if gate.hasTwoInputs:
 #       addGateToNet(gateNum, gate.input2)
 #     addGateToNet(gateNum, gate.output)
-  
+
 #   var neighbours = newSeq[IntSet](gates.len)
 #   var numEdges = 0
 #   for gateNum, gate in gates:
@@ -106,11 +106,11 @@ proc readBlif(input: Stream): seq[Gate] =
 #     neighbourSet.excl(gateNum)
 #     neighbours[gateNum] = neighbourSet
 #     inc(numEdges, neighbourSet.card)
-  
+
 #   if numEdges == 0:
 #     # packing doesn't matter
 #     return false
-  
+
 #   # Each edge will have been counted twice; (u,v) as well as (v,u).
 #   numEdges = numEdges div 2
 
@@ -120,7 +120,7 @@ proc readBlif(input: Stream): seq[Gate] =
 #     for neighbourGateNum in neighbours[gateNum]:
 #       output.write("$1 " % $(neighbourGateNum+1))
 #     output.writeLine()
-  
+
 #   return true
 
 # proc writeMetisPartitionWeights(output: Stream, gates: seq[Gate]): int =
@@ -131,7 +131,7 @@ proc readBlif(input: Stream): seq[Gate] =
 #   let numFullPackages = numGates div ps
 #   output.writeLine("0 - $1 = $2" % [$(numFullPackages-1), $(gateWeight*ps.float)])
 #   result = numFullPackages
-  
+
 #   let leftoverGates = numGates mod ps
 #   if leftoverGates != 0:
 #     output.writeLine("$1 = $2" % [$numFullPackages, $(gateWeight*leftoverGates.float)])
@@ -151,18 +151,18 @@ proc dumbPartition(gates: seq[Gate]): seq[seq[Gate]] =
 # proc partition(gates: seq[Gate]): seq[seq[Gate]] =
 #   if gates.len == 0:
 #     return @[]
-  
+
 #   let (graphFile, graphFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".graph.dat", mode = fmWrite)
 #   let continueWithMetis = writeMetisGraph(newFileStream(graphFile), gates)
 #   graphFile.close()
-  
+
 #   if not continueWithMetis:
 #     return dumbPartition(gates)
-  
+
 #   let (weightsFile, weightsFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".tpwgts.dat", mode = fmWrite)
 #   let numPartitions = writeMetisPartitionWeights(newFileStream(weightsFile), gates)
 #   weightsFile.close()
-  
+
 #   let processArgs = [
 #     "-tpwgts", weightsFileName, # Path to file containing partition weights
 #     "-seed", "1",               # RNG seed (use a fixed value for deterministic results)
@@ -172,36 +172,36 @@ proc dumbPartition(gates: seq[Gate]): seq[seq[Gate]] =
 #   let processOpts = {poEchoCmd, poUsePath, poParentStreams}
 #   let p = startProcess("gpmetis", args = processArgs, options = processOpts)
 #   defer: p.close()
-  
+
 #   let exitCode = p.waitForExit()
 #   if exitCode != 0:
 #     echo "error: gpmetis exited with code $1" % $exitCode
 #     quit(1)
-  
+
 #   let partFileName = graphFileName & ".part." & $numPartitions
 #   if not partFileName.existsFile:
 #     echo "error: failed to locate gpmetis output file (expected it to be $1)" % partFileName
 #     quit(1)
-  
+
 #   let partFile = open(partFileName, mode = fmRead)
 #   let partStream = newFileStream(partFile)
-  
+
 #   result.newSeq(numPartitions)
 #   for i in result.low .. result.high:
 #     result[i].newSeq(0)
-  
+
 #   var line = ""
 #   var gateNum = 0
 #   while partStream.readLine(line):
 #     let partNum = line.parseInt
 #     result[partNum].add(gates[gateNum])
 #     inc gateNum
-  
+
 #   #for part in result.mitems:
-#     #assert 
-  
+#     #assert
+
 #   partFile.close()
-  
+
 #   removeFile(graphFileName)
 #   removeFile(weightsFileName)
 #   removeFile(partFileName)
@@ -209,7 +209,7 @@ proc dumbPartition(gates: seq[Gate]): seq[seq[Gate]] =
 proc pad(parts: var seq[seq[Gate]]) =
   if parts.len == 0:
     return
-  
+
   let kind = parts[0][0].kind
   let ps = kind.packageSize
   for part in parts.mitems:
@@ -235,18 +235,18 @@ proc newInstanceName(prefix: string = defaultPrefix): string =
 proc writeAttano(output: Stream, parts: seq[seq[Gate]], prefix: string = defaultPrefix) =
   if parts.len == 0:
     return
-  
+
   const classNames: array[GateKind, string] = ["NOT", "AND", "OR", "NAND", "NOR", "XOR"]
-  
+
   let kind = parts[0][0].kind
   let ps = kind.packageSize
   let className = classNames[kind]
 
   for part in parts:
     assert((part.len mod ps) == 0)
-  
+
     let instName = newInstanceName(prefix)
-    
+
     if kind.hasTwoInputs:
       output.writeLine "instance $1: $2[4] (" % [instName, className]
       output.writeLine "  in0 => {$1, $2, $3, $4}," % [part[0].input1, part[1].input1, part[2].input1, part[3].input1]
@@ -285,7 +285,7 @@ Options:
   let outputStream = newFileStream(outputFile)
 
   let prefix = $args["--prefix"]
-  
+
   let gates = readBlif(inputStream)
 
   var gatesByKind: array[GateKind, seq[Gate]]
