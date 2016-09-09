@@ -22,7 +22,7 @@ git submodule update --remote rtl
 
 # Convert SystemVerilog to Verilog 1995, as Yosys doesn't support SystemVerilog very well.
 verilog_sources=$(find rtl -name '*.sv')
-iverilog -tvlog95 -o"$input" -g2005-sv -Irtl -Irtl/k12a -s $1 $verilog_sources
+iverilog -tvlog95 -o"$input" -g2005-sv -Irtl -Irtl/k12a -s "$module" $verilog_sources
 
 # Run yosys to synthesise the Verilog into a netlist.
 yosys -q <<YOSYSEND
