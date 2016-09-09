@@ -1,0 +1,3 @@
+[submodule "rtl"]
+	path = rtl
+	url = https://github.com/k12a-cpu/rtl.git
