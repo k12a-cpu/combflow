@@ -82,6 +82,42 @@ proc readBlif(input: Stream): seq[Gate] =
           raise newException(BlifParseError, "line $1: unexpected parameter name '$2'" % [$lineno, paramName])
       result.add(gate)
 
+proc demoteExcessInverters(gatesByKind: var array[GateKind, seq[Gate]]) =
+  # All but one NOT-gate packages are guaranteed to have all 6 slots filled.
+  # excessNots is the number of filled slots in the package that doesn't necessarily have all 6 slots filled.
+  var excessNots = gatesByKind[gateNot].len mod 6
+  # Similarly for NAND, NOR and XOR:
+  let excessNands = gatesByKind[gateNand].len mod 4
+  let excessNors = gatesByKind[gateNor].len mod 4
+  let excessXors = gatesByKind[gateXor].len mod 4
+  var freeNandSlots = (4 - excessNands) mod 4
+  var freeNorSlots = (4 - excessNors) mod 4
+  var freeXorSlots = (4 - excessXors) mod 4
+  if excessNots <= freeNandSlots + freeNorSlots + freeXorSlots:
+    # Fit the excess NOTs into NOR, NAND and XOR packages.
+    while excessNots > 0 and freeNandSlots > 0:
+      var gate = gatesByKind[gateNot].pop()
+      gate.kind = gateNand
+      gate.input2 = "1'h1"
+      gatesByKind[gateNand].add(gate)
+      dec excessNots
+      dec freeNandSlots
+    while excessNots > 0 and freeNorSlots > 0:
+      var gate = gatesByKind[gateNot].pop()
+      gate.kind = gateNor
+      gate.input2 = "1'h0"
+      gatesByKind[gateNor].add(gate)
+      dec excessNots
+      dec freeNorSlots
+    while excessNots > 0 and freeXorSlots > 0:
+      var gate = gatesByKind[gateNot].pop()
+      gate.kind = gateXor
+      gate.input2 = "1'h0"
+      gatesByKind[gateXor].add(gate)
+      dec excessNots
+      dec freeXorSlots
+    assert((gatesByKind[gateNot].len mod 6) == 0)
+
 # proc writeMetisGraph(output: Stream, gates: seq[Gate]): bool =
 #   var nets = initTable[Node, seq[int]]()
 #   template addGateToNet(gateNum: int, node: Node) =
@@ -293,6 +329,8 @@ Options:
     gatesByKind[kind].newSeq(0)
   for gate in gates:
     gatesByKind[gate.kind].add(gate)
+
+  demoteExcessInverters(gatesByKind)
 
   for kind in gatesByKind.low .. gatesByKind.high:
     var parts = dumbPartition(gatesByKind[kind])
