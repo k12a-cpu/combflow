@@ -1,4 +1,6 @@
-import docopt, intsets, os, osproc, streams, strutils, tempfile
+import docopt, intsets, os, osproc, streams, strutils
+from algorithm import lowerBound
+from tempfile import mkstemp
 
 type
   Node = string
@@ -199,7 +201,7 @@ proc partition(gates: seq[Gate]): seq[seq[Gate]] =
   let (weightsFile, weightsFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".tpwgts.dat", mode = fmWrite)
   let numPartitions = writeMetisPartitionWeights(newFileStream(weightsFile), gates)
   weightsFile.close()
-  
+
   if numPartitions < 2:
     removeFile(graphFileName)
     removeFile(weightsFileName)
@@ -283,7 +285,25 @@ proc newInstanceName(prefix: string = defaultPrefix): string =
   result = prefix & $counter
   inc counter
 
-proc writeAttano(output: Stream, parts: seq[seq[Gate]], prefix: string = defaultPrefix) =
+proc writeAttanoNodes(output: Stream, gates: seq[Gate]) =
+  var autogenNodes = newSeq[Node]()
+
+  template inclNode(node: Node) =
+    if "autogen" in node:
+      let insertPos = autogenNodes.lowerBound(node)
+      if insertPos >= autogenNodes.len or autogenNodes[insertPos] != node:
+        autogenNodes.insert(node, insertPos)
+
+  for gate in gates:
+    inclNode(gate.input1)
+    if gate.hasTwoInputs:
+      inclNode(gate.input2)
+    inclNode(gate.output)
+
+  for node in autogenNodes:
+    output.writeLine "node $1: bit;" % node
+
+proc writeAttanoInstances(output: Stream, parts: seq[seq[Gate]], prefix: string = defaultPrefix) =
   if parts.len == 0:
     return
 
@@ -339,6 +359,8 @@ Options:
 
   let gates = readBlif(inputStream)
 
+  writeAttanoNodes(outputStream, gates)
+
   var gatesByKind: array[GateKind, seq[Gate]]
   for kind in gatesByKind.low .. gatesByKind.high:
     gatesByKind[kind].newSeq(0)
@@ -350,6 +372,6 @@ Options:
   for kind in gatesByKind.low .. gatesByKind.high:
     var parts = partition(gatesByKind[kind])
     pad(parts)
-    writeAttano(outputStream, parts, prefix)
+    writeAttanoInstances(outputStream, parts, prefix)
 
 main()
