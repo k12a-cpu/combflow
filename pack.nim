@@ -1,4 +1,4 @@
-import docopt, intsets, os, osproc, streams, strutils
+import docopt, intsets, os, osproc, sets, streams, strutils
 from algorithm import lowerBound
 from tempfile import mkstemp
 
@@ -50,13 +50,19 @@ proc `$`(gate: Gate): string {.noSideEffect.} =
   else:
     "$1(A=$2, Y=$3)" % [$gate.kind, gate.input1.avoidNil, gate.output.avoidNil]
 
-proc readBlif(input: Stream): seq[Gate] =
-  result.newSeq(0)
+proc readBlif(input: Stream): (seq[Gate], HashSet[Node]) =
+  var gates = newSeq[Gate]()
+  var publicNodes: HashSet[Node]
+  publicNodes.init()
   var line = ""
   var lineno = 0
   while input.readLine(line):
     inc lineno
-    if line.startsWith(".subckt "):
+    if line.startsWith(".inputs ") or line.startsWith(".outputs "):
+      let parts = line.split()
+      for i in 1 .. parts.high:
+        publicNodes.incl(parts[i])
+    elif line.startsWith(".subckt "):
       let parts = line.split()
       let kindStr = parts[1].strip.toUpperASCII
       var gate: Gate
@@ -82,7 +88,8 @@ proc readBlif(input: Stream): seq[Gate] =
         of "Y": gate.output = node
         else:
           raise newException(BlifParseError, "line $1: unexpected parameter name '$2'" % [$lineno, paramName])
-      result.add(gate)
+      gates.add(gate)
+  result = (gates, publicNodes)
 
 proc demoteExcessInverters(gatesByKind: var array[GateKind, seq[Gate]]) =
   # All but one NOT-gate packages are guaranteed to have all 6 slots filled.
@@ -285,14 +292,14 @@ proc newInstanceName(prefix: string = defaultPrefix): string =
   result = prefix & $counter
   inc counter
 
-proc writeAttanoNodes(output: Stream, gates: seq[Gate]) =
-  var autogenNodes = newSeq[Node]()
+proc writeAttanoNodes(output: Stream, gates: seq[Gate], publicNodes: HashSet[Node]) =
+  var privateNodes = newSeq[Node]()
 
   template inclNode(node: Node) =
-    if "autogen" in node:
-      let insertPos = autogenNodes.lowerBound(node)
-      if insertPos >= autogenNodes.len or autogenNodes[insertPos] != node:
-        autogenNodes.insert(node, insertPos)
+    if node notin publicNodes:
+      let insertPos = privateNodes.lowerBound(node)
+      if insertPos >= privateNodes.len or privateNodes[insertPos] != node:
+        privateNodes.insert(node, insertPos)
 
   for gate in gates:
     inclNode(gate.input1)
@@ -300,7 +307,7 @@ proc writeAttanoNodes(output: Stream, gates: seq[Gate]) =
       inclNode(gate.input2)
     inclNode(gate.output)
 
-  for node in autogenNodes:
+  for node in privateNodes:
     output.writeLine "node $1: bit;" % node
 
 proc writeAttanoInstances(output: Stream, parts: seq[seq[Gate]], prefix: string = defaultPrefix) =
@@ -357,9 +364,9 @@ Options:
 
   let prefix = $args["--prefix"]
 
-  let gates = readBlif(inputStream)
+  let (gates, publicNodes) = readBlif(inputStream)
 
-  writeAttanoNodes(outputStream, gates)
+  writeAttanoNodes(outputStream, gates, publicNodes)
 
   var gatesByKind: array[GateKind, seq[Gate]]
   for kind in gatesByKind.low .. gatesByKind.high:
