@@ -1,4 +1,4 @@
-import docopt, streams, strutils
+import docopt, intsets, os, osproc, streams, strutils, tempfile
 
 type
   Node = string
@@ -118,60 +118,60 @@ proc demoteExcessInverters(gatesByKind: var array[GateKind, seq[Gate]]) =
       dec freeXorSlots
     assert((gatesByKind[gateNot].len mod 6) == 0)
 
-# proc writeMetisGraph(output: Stream, gates: seq[Gate]): bool =
-#   var nets = initTable[Node, seq[int]]()
-#   template addGateToNet(gateNum: int, node: Node) =
-#     nets.mgetOrPut(node, @[]).add(gateNum)
-#   for gateNum, gate in gates:
-#     addGateToNet(gateNum, gate.input1)
-#     if gate.hasTwoInputs:
-#       addGateToNet(gateNum, gate.input2)
-#     addGateToNet(gateNum, gate.output)
+proc writeMetisGraph(output: Stream, gates: seq[Gate]): bool =
+  var nets = initTable[Node, seq[int]]()
+  template addGateToNet(gateNum: int, node: Node) =
+    nets.mgetOrPut(node, @[]).add(gateNum)
+  for gateNum, gate in gates:
+    addGateToNet(gateNum, gate.input1)
+    if gate.hasTwoInputs:
+      addGateToNet(gateNum, gate.input2)
+    addGateToNet(gateNum, gate.output)
 
-#   var neighbours = newSeq[IntSet](gates.len)
-#   var numEdges = 0
-#   for gateNum, gate in gates:
-#     var neighbourSet = initIntSet()
-#     template addNeighbours(node: Node) =
-#       for neighbourGateNum in nets[node]:
-#         neighbourSet.incl(neighbourGateNum)
-#     addNeighbours(gate.input1)
-#     if gate.hasTwoInputs:
-#       addNeighbours(gate.input2)
-#     addNeighbours(gate.output)
-#     neighbourSet.excl(gateNum)
-#     neighbours[gateNum] = neighbourSet
-#     inc(numEdges, neighbourSet.card)
+  var neighbours = newSeq[IntSet](gates.len)
+  var numEdges = 0
+  for gateNum, gate in gates:
+    var neighbourSet = initIntSet()
+    template addNeighbours(node: Node) =
+      for neighbourGateNum in nets[node]:
+        neighbourSet.incl(neighbourGateNum)
+    addNeighbours(gate.input1)
+    if gate.hasTwoInputs:
+      addNeighbours(gate.input2)
+    addNeighbours(gate.output)
+    neighbourSet.excl(gateNum)
+    neighbours[gateNum] = neighbourSet
+    inc(numEdges, neighbourSet.card)
 
-#   if numEdges == 0:
-#     # packing doesn't matter
-#     return false
+  if numEdges == 0:
+    # packing doesn't matter
+    return false
 
-#   # Each edge will have been counted twice; (u,v) as well as (v,u).
-#   numEdges = numEdges div 2
+  # Each edge will have been counted twice; (u,v) as well as (v,u).
+  numEdges = numEdges div 2
 
-#   let numVertices = gates.len
-#   output.writeLine("$1 $2 000" % [$numVertices, $numEdges])
-#   for gateNum in 0 .. gates.high:
-#     for neighbourGateNum in neighbours[gateNum]:
-#       output.write("$1 " % $(neighbourGateNum+1))
-#     output.writeLine()
+  let numVertices = gates.len
+  output.writeLine("$1 $2 000" % [$numVertices, $numEdges])
+  for gateNum in 0 .. gates.high:
+    for neighbourGateNum in neighbours[gateNum]:
+      output.write("$1 " % $(neighbourGateNum+1))
+    output.writeLine()
 
-#   return true
+  return true
 
-# proc writeMetisPartitionWeights(output: Stream, gates: seq[Gate]): int =
-#   ## returns number of partitions
-#   let ps = gates[0].packageSize
-#   let numGates = gates.len
-#   let gateWeight = 1.0 / numGates.float
-#   let numFullPackages = numGates div ps
-#   output.writeLine("0 - $1 = $2" % [$(numFullPackages-1), $(gateWeight*ps.float)])
-#   result = numFullPackages
+proc writeMetisPartitionWeights(output: Stream, gates: seq[Gate]): int =
+  ## returns number of partitions
+  let ps = gates[0].packageSize
+  let numGates = gates.len
+  let gateWeight = 1.0 / numGates.float
+  let numFullPackages = numGates div ps
+  output.writeLine("0 - $1 = $2" % [$(numFullPackages-1), $(gateWeight*ps.float)])
+  result = numFullPackages
 
-#   let leftoverGates = numGates mod ps
-#   if leftoverGates != 0:
-#     output.writeLine("$1 = $2" % [$numFullPackages, $(gateWeight*leftoverGates.float)])
-#     inc result
+  let leftoverGates = numGates mod ps
+  if leftoverGates != 0:
+    output.writeLine("$1 = $2" % [$numFullPackages, $(gateWeight*leftoverGates.float)])
+    inc result
 
 proc dumbPartition(gates: seq[Gate]): seq[seq[Gate]] =
   if gates.len == 0:
@@ -184,63 +184,78 @@ proc dumbPartition(gates: seq[Gate]): seq[seq[Gate]] =
     result.add(gates[i .. j])
     inc(i, ps)
 
-# proc partition(gates: seq[Gate]): seq[seq[Gate]] =
-#   if gates.len == 0:
-#     return @[]
+proc partition(gates: seq[Gate]): seq[seq[Gate]] =
+  if gates.len == 0:
+    return @[]
 
-#   let (graphFile, graphFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".graph.dat", mode = fmWrite)
-#   let continueWithMetis = writeMetisGraph(newFileStream(graphFile), gates)
-#   graphFile.close()
+  let (graphFile, graphFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".graph.dat", mode = fmWrite)
+  let continueWithMetis = writeMetisGraph(newFileStream(graphFile), gates)
+  graphFile.close()
 
-#   if not continueWithMetis:
-#     return dumbPartition(gates)
+  if not continueWithMetis:
+    removeFile(graphFileName)
+    return dumbPartition(gates)
 
-#   let (weightsFile, weightsFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".tpwgts.dat", mode = fmWrite)
-#   let numPartitions = writeMetisPartitionWeights(newFileStream(weightsFile), gates)
-#   weightsFile.close()
+  let (weightsFile, weightsFileName) = mkstemp(prefix = "combflow_metis_", suffix = ".tpwgts.dat", mode = fmWrite)
+  let numPartitions = writeMetisPartitionWeights(newFileStream(weightsFile), gates)
+  weightsFile.close()
+  
+  if numPartitions < 2:
+    removeFile(graphFileName)
+    removeFile(weightsFileName)
+    return dumbPartition(gates)
 
-#   let processArgs = [
-#     "-tpwgts", weightsFileName, # Path to file containing partition weights
-#     "-seed", "1",               # RNG seed (use a fixed value for deterministic results)
-#     graphFileName,              # Path to file containing graph specification
-#     $numPartitions,             # Number of partitions to produce
-#   ]
-#   let processOpts = {poEchoCmd, poUsePath, poParentStreams}
-#   let p = startProcess("gpmetis", args = processArgs, options = processOpts)
-#   defer: p.close()
+  let processArgs = [
+    "-tpwgts", weightsFileName, # Path to file containing partition weights
+    "-seed", "1",               # RNG seed (use a fixed value for deterministic results)
+    graphFileName,              # Path to file containing graph specification
+    $numPartitions,             # Number of partitions to produce
+  ]
+  let processOpts = {poEchoCmd, poUsePath, poParentStreams}
+  let p = startProcess("gpmetis", args = processArgs, options = processOpts)
+  defer: p.close()
 
-#   let exitCode = p.waitForExit()
-#   if exitCode != 0:
-#     echo "error: gpmetis exited with code $1" % $exitCode
-#     quit(1)
+  let exitCode = p.waitForExit()
+  if exitCode != 0:
+    echo "error: gpmetis exited with code $1" % $exitCode
+    quit(1)
 
-#   let partFileName = graphFileName & ".part." & $numPartitions
-#   if not partFileName.existsFile:
-#     echo "error: failed to locate gpmetis output file (expected it to be $1)" % partFileName
-#     quit(1)
+  let partFileName = graphFileName & ".part." & $numPartitions
+  if not partFileName.existsFile:
+    echo "error: failed to locate gpmetis output file (expected it to be $1)" % partFileName
+    quit(1)
 
-#   let partFile = open(partFileName, mode = fmRead)
-#   let partStream = newFileStream(partFile)
+  let partFile = open(partFileName, mode = fmRead)
+  let partStream = newFileStream(partFile)
 
-#   result.newSeq(numPartitions)
-#   for i in result.low .. result.high:
-#     result[i].newSeq(0)
+  result.newSeq(numPartitions)
+  for i in result.low .. result.high:
+    result[i].newSeq(0)
 
-#   var line = ""
-#   var gateNum = 0
-#   while partStream.readLine(line):
-#     let partNum = line.parseInt
-#     result[partNum].add(gates[gateNum])
-#     inc gateNum
+  var line = ""
+  var gateNum = 0
+  var extra = newSeq[Gate]()
+  while partStream.readLine(line):
+    let partNum = line.parseInt
+    if result[partNum].len < 4:
+      result[partNum].add(gates[gateNum])
+    else:
+      extra.add(gates[gateNum])
+    inc gateNum
+  for gate in extra:
+    var added = false
+    for partNum in result.low .. result.high:
+      if result[partNum].len < 4:
+        result[partNum].add(gate)
+        added = true
+        break
+    assert added
 
-#   #for part in result.mitems:
-#     #assert
+  partFile.close()
 
-#   partFile.close()
-
-#   removeFile(graphFileName)
-#   removeFile(weightsFileName)
-#   removeFile(partFileName)
+  removeFile(graphFileName)
+  removeFile(weightsFileName)
+  removeFile(partFileName)
 
 proc pad(parts: var seq[seq[Gate]]) =
   if parts.len == 0:
@@ -333,7 +348,7 @@ Options:
   demoteExcessInverters(gatesByKind)
 
   for kind in gatesByKind.low .. gatesByKind.high:
-    var parts = dumbPartition(gatesByKind[kind])
+    var parts = partition(gatesByKind[kind])
     pad(parts)
     writeAttano(outputStream, parts, prefix)
 
