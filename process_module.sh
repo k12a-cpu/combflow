@@ -30,6 +30,8 @@ read_verilog $input
 hierarchy -check -top $module
 proc
 opt
+flatten
+opt
 techmap
 opt
 abc -liberty $cells
